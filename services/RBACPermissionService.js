@@ -1,11 +1,10 @@
 /**
- * Manage Object level permissions
- * */
+*Manage Object level permissions
+**/
 const UserPermissionService = require('./permissions/UserPermissionService');
 
 class RBACPermissionService {
-
-    static async check(id, permission, user, model, searchCriteria, dto) {
+    static async check(id, permission, user, model, searchCriteria, dto){
         // todo implement
         // return false if no permission
         let [subAction, entity] = permission.split('.');
@@ -16,7 +15,5 @@ class RBACPermissionService {
                 return true;
         }
     }
-
 }
-
 exports = module.exports = RBACPermissionService;

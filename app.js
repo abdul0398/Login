@@ -13,15 +13,19 @@ const {join} = require('path');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const Agenda = require('agenda');
-const cookieParser = require('cookie-parser');
 const socketIo = require('socket.io');
 const MainSocketController = require('./sockets/MainSocketController');
+const flash = require("connect-flash");
+const passport = require("passport");
+const LocalStrategy = require('passport-local');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+
 
 /**
  * Main App Class. Starting point.
  * */
 new class App {
-
     constructor() {
         this.config = {};
         this.appBaseDir = __dirname;
@@ -37,10 +41,12 @@ new class App {
 
     initLogger() {
         let logOnStdOut = this.config.logger.stdout.enabled;
-        if (!logOnStdOut) console.log('[WARNING] >>>>>>>>>>>>>>>> STDOUT for logs is disabled!');
+        if (! logOnStdOut) 
+            console.log('[WARNING] >>>>>>>>>>>>>>>> STDOUT for logs is disabled!');
+        
+
         this.addSafeReadOnlyGlobal('log', new Logger((message) => {
-            if (logOnStdOut) {
-                //Print on console the fully formatted message
+            if (logOnStdOut) { // Print on console the fully formatted message
                 console.log(message.fullyFormattedMessage);
             }
         }, this.config.logger, this.appBaseDir));
@@ -68,7 +74,10 @@ new class App {
         let self = this;
         return new Promise((callback, rej) => {
             try {
-                new ConfigManager({appBaseDir: this.appBaseDir, env: this.appEnv}, function (_config) {
+                new ConfigManager({
+                    appBaseDir: this.appBaseDir,
+                    env: this.appEnv
+                }, function (_config) {
                     self.config = _config;
                     self.addSafeReadOnlyGlobal('_config', _config);
                     callback();
@@ -79,15 +88,8 @@ new class App {
         });
     }
 
-    async initialiseSecurity() {
-        // For Admin and API
-        new StatelessMiddleware(
-            this.app,
-            '_aklpsk',
-            this.config.session.generatorAlgo,
-            this.config.session.generatorSecret,
-            ''
-        );
+    async initialiseSecurity() { // For Admin and API
+        new StatelessMiddleware(this.app, '_aklpsk', this.config.session.generatorAlgo, this.config.session.generatorSecret, '');
     }
 
     async initExpressApp() {
@@ -96,24 +98,26 @@ new class App {
             verify: (req, res, buf) => {
                 req.rawBody = buf;
             }
-        }));
-        this.app.use(cookieParser());
+        }));        
+
+
+        this.app.use(bodyParser.urlencoded({extended: true}));
         this.app.use(cors({origin: true, credentials: true}));
         this.app.set('view engine', 'ejs');
         if (fs.existsSync(join(this.appBaseDir, 'web-app', 'dist'))) {
-            console.log('[FRAMEWORK]'.bold.yellow, `Loading Vue App Dir: '${join(this.appBaseDir, 'web-app', 'dist').bold}'`.magenta);
+            console.log('[FRAMEWORK]'.bold.yellow, `Loading Vue App Dir: '${
+                join(this.appBaseDir, 'web-app', 'dist').bold
+            }'`.magenta);
             this.app.use(express.static(join(this.appBaseDir, 'web-app', 'dist')));
         } // vue app
         this.app.use(express.static('public'));
-        // handle SPA routes, if not found on static, then only this middleware will run.
-        // this.app.use((req, res, next) => {
-        //     if (req.url.search(/api\//i) === -1) {
-        //         fs.createReadStream(join(this.appBaseDir, 'public', 'index.html')).pipe(res);
-        //     } else {
-        //         next();
-        //     }
-        // });
+
+
+
         this.app.use(compression());
+        
+        //
+        
     }
 
     async initModels() {
@@ -124,14 +128,67 @@ new class App {
             if (item.search(/.js$/) !== -1) {
                 let name = item.toString().replace(/\.js$/, '');
                 let schema = require(join(this.appBaseDir, 'models', 'mongo', item));
-                console.log('[FRAMEWORK]'.bold.yellow, `Loading Model: '${name.bold}'`.magenta, 'Connection:'.bold, schema.connection);
-                let url = this.config[`mongoUrl${schema.connection}`];
-                if (!url) throw new Error(`The connection used is ${schema.connection}, but no config variable with name ${('mongoUrl' + schema.connection).bold}`);
+                console.log('[FRAMEWORK]'.bold.yellow, `Loading Model: '${
+                    name.bold
+                }'`.magenta, 'Connection:'.bold, schema.connection);
+                let url = this.config[`mongoUrl${
+                        schema.connection
+                    }`];
+                if (! url) 
+                    throw new Error(`The connection used is ${
+                        schema.connection
+                    }, but no config variable with name ${
+                        ('mongoUrl' + schema.connection).bold
+                    }`);
+                    
                 db[name] = await schema.initialize(schema.connection, url);
             }
         }
 
         this.addSafeReadOnlyGlobal('_db', db);
+
+        // sessionConfig object
+        const sessionConfig = {
+            secret: "RANDOMSECRET",
+            resave: false,
+            saveUninitialized: true,
+            cookie: {
+                httpOnly: true, // so that no one can use script and use session id(by default it is already true)
+                maxAge: (7 * 24 * 60 * 60 * 1000) // expires in 1 week
+            },
+            store: MongoStore.create(
+                {
+                    mongoUrl: this.config.mongoUrlAPP,
+                    touchAfter: 24 * 3600 // at least session will remain for 24hr
+
+                }
+            )
+        }
+
+        //using session middleware
+        this.app.use(session(sessionConfig));
+        // using flash middleware
+        this.app.use(flash());
+
+         //initializing middleware for passport
+         this.app.use(passport.initialize())
+         this.app.use(passport.session());
+         this.app.use(passport.authenticate('session'));
+
+        passport.use(new LocalStrategy(_db.User.authenticate())); // this will do the work for the above code and it is provided by passport-local-mongoose
+        passport.serializeUser(_db.User.serializeUser()); // Add the user.id into session corresponds to user;
+        passport.deserializeUser(_db.User.deserializeUser())
+
+
+        //
+        this.app.use((req,res,next)=>{
+            res.locals.currentUser = req.user;// making the user available to all the ejs files 
+            res.locals.success = req.flash("success");
+            res.locals.error = req.flash("error");
+            next();
+        });
+
+
     }
 
     async runBootstrap() {
@@ -145,18 +202,27 @@ new class App {
             list.forEach(item => {
                 if (item.search(/.js$/) !== -1) {
                     let name = item.toString().replace(/\.js$/, '');
-                    console.log('[FRAMEWORK]'.bold.yellow, `Loading Controller Module: '${name.bold}'`.magenta);
-                    new (require(join(this.appBaseDir, 'controllers', item)))(router);
+                    console.log('[FRAMEWORK]'.bold.yellow, `Loading Controller Module: '${
+                        name.bold
+                    }'`.magenta);
+                    new(require(join(this.appBaseDir, 'controllers', item)))(router);
                 }
             });
             this.app.use('/', router);
+            this.app.use((req, res, next) => {
+                return res.render("error");
+            })
         } catch (err) {
             log.error(err);
         }
     }
 
     addSafeReadOnlyGlobal(prop, val) {
-        console.log('[FRAMEWORK]'.bold.yellow, `Exporting safely '${prop.bold}' from ${this.constructor.name}`.cyan);
+        console.log('[FRAMEWORK]'.bold.yellow, `Exporting safely '${
+            prop.bold
+        }' from ${
+            this.constructor.name
+        }`.cyan);
         Object.defineProperty(global, prop, {
             get: function () {
                 return val;
@@ -177,7 +243,7 @@ new class App {
                 url: "http://127.0.0.1:" + this.port,
                 file: process.argv[1],
                 node: process.argv[0],
-                workerId: 'xxxxx-xxxxxx'.replace(/x/g, a => (~~(Math.random() * 16)).toString(16))
+                workerId: 'xxxxx-xxxxxx'.replace(/x/g, a => (~~ (Math.random() * 16)).toString(16))
             });
         }
     }
@@ -185,7 +251,12 @@ new class App {
     get agenda() {
         if (!this._agenda) {
             this._agenda = new Agenda({
-                db: {address: this.config.mongoUrlAgendaDB, collection: `agendaJobs_${this.appEnv}`},
+                db: {
+                    address: this.config.mongoUrlAgendaDB,
+                    collection: `agendaJobs_${
+                        this.appEnv
+                    }`
+                },
                 defaultConcurrency: 1,
                 defaultLockLifetime: 10000
             });
@@ -226,13 +297,13 @@ new class App {
         return new Promise((res, rej) => {
             server.on('listening', () => {
                 let addr = server.address();
-                let bind = typeof addr === 'string'
-                    ? 'pipe ' + addr
-                    : 'port ' + addr.port;
+                let bind = typeof addr === 'string' ? 'pipe ' + addr : 'port ' + addr.port;
                 log.debug('Listening on ' + bind);
                 this.sendOnlineEvent();
                 res();
             });
+
         });
+
     }
 };

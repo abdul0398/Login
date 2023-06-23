@@ -1,6 +1,7 @@
 const Connection = require('./Connection');
 const ObjectId = require("mongoose").Types.ObjectId;
 const MongoConnections = require('../../../conf/MongoConnections');
+const passportLocalMongoose = require('passport-local-mongoose');
 
 class MongoDbModel extends MongoConnections {
 
@@ -9,7 +10,7 @@ class MongoDbModel extends MongoConnections {
             if (!mongoUrl) throw new Error('MongoDb Url is required to initialize Mongo model. ' + name);
             new Connection(name, mongoUrl, (err, db, mongoose) => {
                 if (err) return rej(err);
-
+                
                 // Ensure interface implemented
                 if (!this.Name) throw new Error('Please implement Name in Model class');
                 if (!this.Schema) throw new Error('Please implement Schema in Model class');
@@ -17,6 +18,7 @@ class MongoDbModel extends MongoConnections {
 
                 // Define Schema
                 let schema = mongoose.Schema(this.Schema(mongoose));
+                schema.plugin(passportLocalMongoose);
 
                 if (this.PreHook) {
                     let kinds = Object.keys(this.PreHook);

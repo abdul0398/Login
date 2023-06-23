@@ -1,12 +1,12 @@
 /**
  * User model
  * */
-const MongoDbModel = require('../../bootloader/mongo');
+const MongoDbModel = require('../../bootloader/mongo/lib/MongoDbModel');
 // For Number types better reading
 const Float = Number;
 const Int = Number;
 
-class User extends MongoDbModel {
+class Color extends MongoDbModel {
 
     /*Define which database to connect to*/
     static get connection() {
@@ -20,7 +20,7 @@ class User extends MongoDbModel {
 
     static get Schema() {
         return mongoose => ({
-            email:String,
+            color:String
         })
     }
 
@@ -29,5 +29,4 @@ class User extends MongoDbModel {
     }
 }
 
-exports = module.exports = User;
-
+exports = module.exports = Color;
